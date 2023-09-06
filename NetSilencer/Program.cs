@@ -198,8 +198,20 @@ class NetSilencer
     {
         try
         {
-            // Logging logic here
-            // ...
+            using (System.IO.StreamWriter file = new System.IO.StreamWriter(logFileName))
+            {
+                file.WriteLine($"Scan results for target: {target}");
+                file.WriteLine($"Timeout: {timeoutMilliseconds} milliseconds");
+                file.WriteLine($"Elapsed Time: {elapsedTime.TotalSeconds:F2} seconds");
+                file.WriteLine("Open ports:");
+
+                foreach (int port in openPorts)
+                {
+                    file.WriteLine($"- Port {port} is open");
+                }
+            }
+
+            Console.WriteLine($"Scan results saved to {logFileName}");
         }
         catch (Exception ex)
         {
