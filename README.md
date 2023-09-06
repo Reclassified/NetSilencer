@@ -9,7 +9,7 @@
 - User-Friendly Output: The tool displays a list of open ports for easy identification.
 - Error Handling: NetSilencer gracefully handles cases where the target is down or unreachable.
 
-### Usage
+### Usage:
 
 1. Clone this repository.
 2. Compile the program using your preferred C# development environment.
@@ -19,7 +19,7 @@ To scan a target for open ports, simply run the executable and provide the targe
 
 NetSilencer [-p <port>] <target>
 
-### Example
+### Example:
 
 Scan a target for open ports:
 
