@@ -1,17 +1,22 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 
 class NetSilencer
 {
-    static void Main(string[] args)
+    static async Task Main(string[] args)
     {
         Console.WriteLine("Welcome to NetSilencer!");
         Console.Title = "NetSilencer by BlasterEngine";
         string target = string.Empty;
         int[] portsToScan = GetDefaultPortsToScan(); // Default to common ports
+        int timeoutMilliseconds = 5000; // Default timeout
+
+        string logFileName = "scan_log.txt";
+        bool logEnabled = false;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -19,6 +24,20 @@ class NetSilencer
             {
                 portsToScan = new[] { customPort };
                 i++; // Skip the next argument (the custom port)
+            }
+            else if (args[i] == "-r" && i + 2 < args.Length && int.TryParse(args[i + 1], out int startPort) && int.TryParse(args[i + 2], out int endPort))
+            {
+                portsToScan = GetPortRange(startPort, endPort);
+                i += 2; // Skip the next two arguments (start and end port)
+            }
+            else if (args[i] == "-t" && i + 1 < args.Length && int.TryParse(args[i + 1], out int customTimeout))
+            {
+                timeoutMilliseconds = customTimeout;
+                i++; // Skip the next argument (the custom timeout)
+            }
+            else if (args[i] == "-log")
+            {
+                logEnabled = true;
             }
             else
             {
@@ -28,42 +47,32 @@ class NetSilencer
 
         if (string.IsNullOrEmpty(target))
         {
-            Console.WriteLine("Usage: NetSilencer [-p <port>] <target>");
+            Console.WriteLine("Usage: NetSilencer [-p <port> | -r <startPort> <endPort>] [-t <timeout>] [-log] <target>");
             return;
         }
 
         Console.WriteLine($"Scanning target: {target}");
+        Console.WriteLine($"Timeout set to {timeoutMilliseconds} milliseconds");
 
-        List<int> openPorts = new List<int>();
+        List<Task> scanTasks = new List<Task>();
+        Stopwatch stopwatch = new Stopwatch();
+        stopwatch.Start();
 
-        try
+        foreach (int port in portsToScan)
         {
-            // Use Parallel.ForEach to scan ports concurrently
-            Parallel.ForEach(portsToScan, port =>
-            {
-                if (IsPortOpen(target, port))
-                {
-                    openPorts.Add(port);
-                }
-            });
-
-            if (openPorts.Count > 0)
-            {
-                Console.WriteLine("Open ports:");
-                foreach (int port in openPorts)
-                {
-                    Console.WriteLine($"Port {port}");
-                }
-            }
-            else
-            {
-                Console.WriteLine("No open ports found.");
-            }
+            scanTasks.Add(IsPortOpenAsync(target, port, timeoutMilliseconds));
         }
-        catch (Exception ex)
+
+        await Task.WhenAll(scanTasks);
+
+        stopwatch.Stop();
+        TimeSpan elapsedTime = stopwatch.Elapsed;
+
+        Console.WriteLine($"Scan completed in {elapsedTime.TotalSeconds:F2} seconds");
+
+        if (logEnabled)
         {
-            Console.WriteLine($"Error: {ex.Message}");
-            Console.WriteLine("The target may be down or unreachable.");
+            LogScanResults(logFileName, target, portsToScan, timeoutMilliseconds, elapsedTime);
         }
     }
 
@@ -78,19 +87,79 @@ class NetSilencer
         return commonPorts;
     }
 
-    static bool IsPortOpen(string host, int port)
+    static int[] GetPortRange(int startPort, int endPort)
+    {
+        if (startPort <= endPort)
+        {
+            int[] portRange = new int[endPort - startPort + 1];
+            for (int i = 0; i < portRange.Length; i++)
+            {
+                portRange[i] = startPort + i;
+            }
+            return portRange;
+        }
+        else
+        {
+            Console.WriteLine("Invalid port range. Start port must be less than or equal to end port.");
+            Environment.Exit(1);
+            return null;
+        }
+    }
+
+    static async Task IsPortOpenAsync(string host, int port, int timeoutMilliseconds)
     {
         try
         {
             using (TcpClient client = new TcpClient())
             {
-                client.Connect(host, port);
-                return true;
+                await client.ConnectAsync(host, port);
+                Console.WriteLine($"Port {port} is open");
             }
         }
         catch (SocketException)
         {
-            return false;
+            // Port is closed
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error while scanning port {port}: {ex.Message}");
+        }
+    }
+
+    static void LogScanResults(string logFileName, string target, int[] ports, int timeoutMilliseconds, TimeSpan elapsedTime)
+    {
+        try
+        {
+            using (StreamWriter writer = new StreamWriter(logFileName, true))
+            {
+                writer.WriteLine($"Scan results for target: {target}");
+                writer.WriteLine($"Timeout set to {timeoutMilliseconds} milliseconds");
+                writer.WriteLine($"Scan completed in {elapsedTime.TotalSeconds:F2} seconds");
+                writer.WriteLine("Open ports:");
+
+                foreach (int port in ports)
+                {
+                    try
+                    {
+                        using (TcpClient client = new TcpClient())
+                        {
+                            client.Connect(target, port);
+                            writer.WriteLine($"Port {port} is open");
+                        }
+                    }
+                    catch (SocketException)
+                    {
+                        // Port is closed
+                    }
+                }
+
+                writer.WriteLine();
+            }
+            Console.WriteLine($"Scan results logged to {logFileName}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error while writing to log file: {ex.Message}");
         }
     }
 }
