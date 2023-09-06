@@ -14,7 +14,6 @@
 1. Clone this repository.
 2. Compile the program using your preferred C# development environment.
 3. Run the program, specifying the port you want to listen on.
-4. Connect to the listening port and send your shellcode for execution.
 
 To scan a target for open ports, simply run the executable and provide the target's hostname or IP address. By default, NetSilencer scans common ports from 1 to 1024. You can specify a custom port or range of ports using the -p option.
 
