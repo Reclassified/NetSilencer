@@ -31,12 +31,15 @@ To scan a target for open ports, simply run the executable and provide the targe
 ### Examples
 
 Scan a specific port (e.g., port 80):
+
 NetSilencer -p 80 example.com
 
 Scan a range of ports (e.g., ports 20 to 100):
+
 NetSilencer -p 20-100 example.com
 
 Specify a custom timeout (e.g., 2000 milliseconds):
+
 NetSilencer -p 80 -t 2000 example.com
 
 ## Disclaimer
