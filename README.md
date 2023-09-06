@@ -19,7 +19,7 @@ To scan a target for open ports, simply run the executable and provide the targe
 
 NetSilencer [-p <port>] <target>
 
-###Example
+### Example
 
 Scan a target for open ports:
 
