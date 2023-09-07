@@ -1,6 +1,9 @@
-﻿using System.Diagnostics;
+﻿using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading.Tasks;
 
 class NetSilencer
 {
@@ -15,8 +18,7 @@ class NetSilencer
         string logFileName = "scan_log.txt";
         bool logEnabled = false;
 
-        bool sendToDiscord = false;
-        string discordWebhookUrl = "YOUR_DISCORD_WEBHOOK_URL"; // Replace with your Discord webhook URL
+        string discordWebhookUrl = string.Empty;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -41,7 +43,6 @@ class NetSilencer
             }
             else if (args[i] == "-w" && i + 1 < args.Length)
             {
-                sendToDiscord = true;
                 discordWebhookUrl = args[i + 1];
                 i++; // Skip the next argument (the webhook URL)
             }
@@ -60,35 +61,49 @@ class NetSilencer
         Console.WriteLine($"Scanning target: {target}");
         Console.WriteLine($"Timeout set to {timeoutMilliseconds} milliseconds");
 
-        List<Task<bool>> scanTasks = new List<Task<bool>>();
+        List<Task<PortScanResult>> scanTasks = new List<Task<PortScanResult>>();
         Stopwatch stopwatch = new Stopwatch();
         stopwatch.Start();
 
-        List<int> openPorts = new List<int>();
-
         foreach (int port in portsToScan)
         {
-            scanTasks.Add(Task.Run(async () => await IsPortOpenAsync(target, port, timeoutMilliseconds)));
-        }
-
-        await Task.WhenAll(scanTasks);
-
-        for (int i = 0; i < scanTasks.Count; i++)
-        {
-            int port = portsToScan[i];
-            if (scanTasks[i].Result)
+            scanTasks.Add(Task.Run(async () =>
             {
-                Console.WriteLine($"Port {port} is open");
-                openPorts.Add(port);
-            }
-
-            DisplayLoadingBar(i + 1, scanTasks.Count);
+                return await ScanPortAsync(target, port, timeoutMilliseconds);
+            }));
         }
 
-        Console.WriteLine(); // Move to a new line after the loading bar
+        List<int> openPorts = new List<int>();
+
+        // Display the loading bar while waiting for tasks to complete
+        while (!Task.WhenAll(scanTasks).IsCompleted)
+        {
+            int completedTasks = scanTasks.Count(task => task.IsCompleted);
+            DisplayLoadingBar(completedTasks, portsToScan.Length);
+            await Task.Delay(100);
+        }
+        Console.Clear(); // Clear the loading bar
+        Console.WriteLine($"Scanning ports... {scanTasks.Count}/{portsToScan.Length}");
+
+        foreach (var scanResult in scanTasks)
+        {
+            if (scanResult.Result.IsOpen)
+            {
+                Console.WriteLine($"[+] Port {scanResult.Result.Port} is open");
+
+                if (!string.IsNullOrEmpty(scanResult.Result.ServiceBanner))
+                {
+                    Console.WriteLine($"    Service on port {scanResult.Result.Port}: {scanResult.Result.ServiceBanner}");
+                }
+
+                openPorts.Add(scanResult.Result.Port);
+            }
+        }
+
         stopwatch.Stop();
         TimeSpan elapsedTime = stopwatch.Elapsed;
 
+        Console.WriteLine();
         Console.WriteLine($"Scan completed in {elapsedTime.TotalSeconds:F2} seconds");
 
         if (logEnabled)
@@ -96,7 +111,7 @@ class NetSilencer
             LogScanResults(logFileName, target, openPorts, timeoutMilliseconds, elapsedTime);
         }
 
-        if (sendToDiscord)
+        if (!string.IsNullOrEmpty(discordWebhookUrl))
         {
             await SendToDiscordWebhookAsync(discordWebhookUrl, target, openPorts, elapsedTime);
         }
@@ -129,76 +144,73 @@ class NetSilencer
         return commonPorts;
     }
 
-    static int[] GetPortRange(int startPort, int endPort)
+    static async Task<PortScanResult> ScanPortAsync(string host, int port, int timeoutMilliseconds)
     {
-        if (startPort <= endPort)
+        PortScanResult result = new PortScanResult { Port = port };
+
+        try
         {
-            int[] portRange = new int[endPort - startPort + 1];
-            for (int i = 0; i < portRange.Length; i++)
+            using (var client = new TcpClient())
             {
-                portRange[i] = startPort + i;
+                var task = client.ConnectAsync(host, port);
+                if (await Task.WhenAny(task, Task.Delay(timeoutMilliseconds)) == task)
+                {
+                    result.IsOpen = client.Connected;
+                    if (client.Connected)
+                    {
+                        result.ServiceBanner = await GetServiceBannerAsync(client);
+                    }
+                }
             }
-            return portRange;
         }
-        else
+        catch (Exception)
         {
-            Console.WriteLine("Invalid port range. Start port must be less than or equal to end port.");
-            Environment.Exit(1);
-            return null;
+            // Handle any exceptions here
         }
+
+        return result;
     }
 
-    static async Task<bool> IsPortOpenAsync(string host, int port, int timeoutMilliseconds)
+    static async Task<string> GetServiceBannerAsync(TcpClient client)
     {
         try
         {
-            using (TcpClient client = new TcpClient())
+            using (var stream = client.GetStream())
             {
-                await client.ConnectAsync(host, port);
-                return true;
+                byte[] banner = new byte[1024];
+                int bytesRead = await stream.ReadAsync(banner, 0, banner.Length);
+                return Encoding.ASCII.GetString(banner, 0, bytesRead);
             }
         }
-        catch (SocketException)
+        catch (Exception)
         {
-            return false;
+            // Handle any exceptions here
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error while scanning port {port}: {ex.Message}");
-            return false;
-        }
+
+        return null;
     }
 
-    static async Task SendToDiscordWebhookAsync(string webhookUrl, string target, List<int> openPorts, TimeSpan elapsedTime)
+    static int[] GetPortRange(int startPort, int endPort)
     {
-        using (HttpClient client = new HttpClient())
+        if (startPort < 1 || startPort > 65535 || endPort < 1 || endPort > 65535 || startPort > endPort)
         {
-            var payload = new
-            {
-                content = $"Scan results for target: {target}\nElapsed Time: {elapsedTime.TotalSeconds:F2} seconds\nOpen ports: {string.Join(", ", openPorts)}"
-            };
-
-            var jsonPayload = Newtonsoft.Json.JsonConvert.SerializeObject(payload);
-
-            var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-            var response = await client.PostAsync(webhookUrl, content);
-
-            if (response.IsSuccessStatusCode)
-            {
-                Console.WriteLine("Scan results sent to Discord successfully.");
-            }
-            else
-            {
-                Console.WriteLine($"Failed to send scan results to Discord. Status Code: {response.StatusCode}");
-            }
+            throw new ArgumentException("Invalid port range.");
         }
+
+        int[] ports = new int[endPort - startPort + 1];
+        for (int i = 0; i < ports.Length; i++)
+        {
+            ports[i] = startPort + i;
+        }
+
+        return ports;
     }
 
     static void LogScanResults(string logFileName, string target, List<int> openPorts, int timeoutMilliseconds, TimeSpan elapsedTime)
     {
         try
         {
-            using (System.IO.StreamWriter file = new System.IO.StreamWriter(logFileName))
+            using (var file = System.IO.File.CreateText(logFileName))
             {
                 file.WriteLine($"Scan results for target: {target}");
                 file.WriteLine($"Timeout: {timeoutMilliseconds} milliseconds");
@@ -218,4 +230,44 @@ class NetSilencer
             Console.WriteLine($"Error while writing to log file: {ex.Message}");
         }
     }
+
+    static async Task SendToDiscordWebhookAsync(string webhookUrl, string target, List<int> openPorts, TimeSpan elapsedTime)
+    {
+        try
+        {
+            // Create a JSON payload for the Discord message
+            var discordMessage = new
+            {
+                content = $"Scan results for target: {target} \nElasped Time {elapsedTime.TotalSeconds:F2} seconds \nOpen Ports: {string.Join(", ", openPorts)}"
+            };
+
+            var jsonPayload = Newtonsoft.Json.JsonConvert.SerializeObject(discordMessage);
+
+            using (var httpClient = new HttpClient())
+            {
+                var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+                var response = await httpClient.PostAsync(webhookUrl, content);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    Console.WriteLine("Results sent to Discord successfully!");
+                }
+                else
+                {
+                    Console.WriteLine($"Failed to send results to Discord. Error: {response.StatusCode} - {response.ReasonPhrase}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error sending results to Discord: {ex.Message}");
+        }
+    }
+}
+
+class PortScanResult
+{
+    public int Port { get; set; }
+    public bool IsOpen { get; set; }
+    public string ServiceBanner { get; set; }
 }
