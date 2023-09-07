@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
@@ -238,7 +239,7 @@ class NetSilencer
             // Create a JSON payload for the Discord message
             var discordMessage = new
             {
-                content = $"Scan results for target: {target} \nElasped Time {elapsedTime.TotalSeconds:F2} seconds \nOpen Ports: {string.Join(", ", openPorts)}"
+                content = $"Scan results for target: {target} \nElapsed Time {elapsedTime.TotalSeconds:F2} seconds \nOpen Ports: {string.Join(", ", openPorts)}"
             };
 
             var jsonPayload = Newtonsoft.Json.JsonConvert.SerializeObject(discordMessage);
